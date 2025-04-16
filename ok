@@ -1,0 +1,218 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local localPlayer = Players.LocalPlayer
+
+-- Anti-AFK variables
+local lastActionTime = os.time()
+local isAFKPreventionActive = true
+local MIN_ACTION_INTERVAL = 30  -- Minimum time between actions (seconds)
+local MAX_ACTION_INTERVAL = 120 -- Maximum time between actions (seconds)
+
+-- Map configurations with specific positions
+local MAP_CONFIGS = {
+    ["LavaMap_Doomspire"] = {
+        path = "Map.LavaMap_Doomspire.MapTop",
+        position = CFrame.new(-282.5241394042969, 239.59979248046875, -166.25466918945312)
+    },
+    ["LavaMap_Construction"] = {
+        path = "Map.LavaMap_Construction.MapTop",
+        position = CFrame.new(-231.18112182617188, 314.56951904296875, -26.322837829589844)
+    },
+    ["LavaMap_Jungle"] = {
+        path = "Map.LavaMap_Jungle.MapTop",
+        position = CFrame.new(-351.7426452636719, 268.588134765625, -4.526939392089844)
+    }
+}
+
+-- Legit Anti-AFK System
+local function performAntiAFKAction()
+    if not isAFKPreventionActive then return end
+    
+    -- Randomize next action time
+    local nextActionDelay = math.random(MIN_ACTION_INTERVAL, MAX_ACTION_INTERVAL)
+    task.wait(nextActionDelay)
+    
+    -- Only perform actions if no recent player activity
+    if os.time() - lastActionTime > MIN_ACTION_INTERVAL then
+        -- Randomly select an action (subtle movements)
+        local actionType = math.random(1, 4)
+        
+        if actionType == 1 then
+            -- Small mouse movement
+            VirtualInputManager:SendMouseMoveEvent(
+                math.random(10, 100),
+                math.random(10, 100),
+                game:GetService("Workspace")
+            )
+            print("🖱️ Anti-AFK: Subtle mouse movement")
+            
+        elseif actionType == 2 then
+            -- Quick key press (unbound key)
+            VirtualInputManager:SendKeyEvent(
+                true,
+                Enum.KeyCode.F12,
+                false,
+                game
+            )
+            task.wait(0.1)
+            VirtualInputManager:SendKeyEvent(
+                false,
+                Enum.KeyCode.F12,
+                false,
+                game
+            )
+            print("⌨️ Anti-AFK: Quick key press")
+            
+        elseif actionType == 3 and localPlayer.Character then
+            -- Micro camera adjustment
+            localPlayer.CameraMaxZoomDistance = 15
+            task.wait(0.2)
+            localPlayer.CameraMaxZoomDistance = 12
+            print("📷 Anti-AFK: Camera adjustment")
+            
+        elseif actionType == 4 and localPlayer.Character then
+            -- Minimal character turn
+            local humanoid = localPlayer.Character:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                humanoid:ChangeState(Enum.HumanoidStateType.Running)
+                task.wait(0.2)
+                humanoid:ChangeState(Enum.HumanoidStateType.RunningNoPhysics)
+                print("🏃 Anti-AFK: Micro movement")
+            end
+        end
+        
+        lastActionTime = os.time()
+    end
+    
+    -- Schedule next check
+    coroutine.wrap(performAntiAFKAction)()
+end
+
+local function getCurrentCharacter()
+    return localPlayer.Character or localPlayer.CharacterAdded:Wait()
+end
+
+local function findCurrentMap()
+    for mapName, config in pairs(MAP_CONFIGS) do
+        local current = workspace
+        for _, name in ipairs(config.path:split(".")) do
+            current = current:FindFirstChild(name)
+            if not current then break end
+        end
+        if current then
+            return mapName, current
+        end
+    end
+    return nil, nil
+end
+
+local function setMapPosition(mapTop, position)
+    if mapTop and mapTop:IsA("BasePart") then
+        mapTop.CFrame = position
+        print("🗺️ Set position for", mapTop:GetFullName())
+    end
+end
+
+local function playEmote()
+    local args = {
+        true,
+        "Emote3",
+        os.clock()
+    }
+    local emoteRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("CustomEmote")
+    emoteRemote:FireServer(unpack(args))
+    print("💃 Emote played after teleport")
+end
+
+local function safeTeleport(character, teleportSpot)
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not humanoid or not humanoid.RootPart then return end
+
+    -- Anchor player and disable movement
+    humanoid.RootPart.Anchored = true
+    humanoid.AutoRotate = false
+    humanoid:ChangeState(Enum.HumanoidStateType.Physics)
+    print("🔒 Player anchored")
+
+    -- Wait out the delay while anchored
+    task.wait(10)
+
+    -- Perform teleport
+    humanoid.RootPart.CFrame = teleportSpot.CFrame + Vector3.new(0, 5, 0)
+    print("🚀 Teleported player to", teleportSpot.Name)
+
+    -- Briefly wait before restoring physics
+    task.wait(0.5)
+    humanoid.RootPart.Anchored = false
+    humanoid.AutoRotate = true
+    print("🔓 Player unanchored")
+
+    -- Play emote after teleport
+    playEmote()
+end
+
+local function handleTouchInterest()
+    local lava = workspace:FindFirstChild("Lava")
+    if not lava then return end
+
+    local touchInterest = lava:FindFirstChild("TouchInterest")
+    if touchInterest then
+        -- Immediately destroy TouchInterest
+        touchInterest:Destroy()
+        print("🔥 TouchInterest removed instantly")
+        
+        -- Find current map and set its position
+        local mapName, mapTop = findCurrentMap()
+        if mapName and mapTop then
+            local config = MAP_CONFIGS[mapName]
+            setMapPosition(mapTop, config.position)
+        end
+        
+        -- Start safe teleport process
+        local character = getCurrentCharacter()
+        local teleportSpot = mapTop or findCurrentMap()
+        if teleportSpot then
+            print("⏳ Beginning 10-second anchored teleport delay...")
+            coroutine.wrap(safeTeleport)(character, teleportSpot)
+        end
+    end
+end
+
+-- Track player activity to avoid interfering with real actions
+local function trackPlayerActivity()
+    local humanoid = getCurrentCharacter():WaitForChild("Humanoid")
+    
+    humanoid:GetPropertyChangedSignal("MoveDirection"):Connect(function()
+        lastActionTime = os.time()
+    end)
+    
+    game:GetService("UserInputService").InputBegan:Connect(function()
+        lastActionTime = os.time()
+    end)
+end
+
+-- Initialize systems
+localPlayer.CharacterAdded:Connect(function(character)
+    local humanoid = character:WaitForChild("Humanoid")
+    humanoid.RootPart.Anchored = false
+    humanoid.AutoRotate = true
+    trackPlayerActivity()
+end)
+
+-- Start anti-AFK system
+coroutine.wrap(performAntiAFKAction)()
+
+-- Event-based detection
+workspace.DescendantAdded:Connect(function(child)
+    if child.Name == "TouchInterest" and child:IsDescendantOf(workspace.Lava) then
+        task.wait(0.1)
+        pcall(handleTouchInterest)
+    end
+end)
+
+-- Fallback polling
+while true do
+    task.wait(1)
+    pcall(handleTouchInterest)
+end
